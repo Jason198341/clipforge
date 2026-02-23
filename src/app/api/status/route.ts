@@ -7,6 +7,7 @@ import type { SSEMessage } from '@/types/pipeline';
 const activePipelines = new Map<string, {
   send: (msg: SSEMessage) => void;
   close: () => void;
+  connId: string;
 }>();
 
 /** GET: SSE stream for pipeline progress */
@@ -17,13 +18,23 @@ export async function GET(req: NextRequest) {
   }
 
   const { stream, send, close } = createSSEStream();
+  const connId = Math.random().toString(36).slice(2);
 
-  // Register this SSE connection
-  activePipelines.set(projectId, { send, close });
+  // Register this SSE connection (replaces old one on reconnect)
+  activePipelines.set(projectId, { send, close, connId });
 
-  // Clean up on disconnect
+  // Send keepalive every 15s to prevent browser/proxy timeout
+  const keepalive = setInterval(() => {
+    send({ type: 'progress', message: '' } as SSEMessage);
+  }, 15000);
+
+  // Clean up on disconnect — only delete if this is still the active connection
   req.signal.addEventListener('abort', () => {
-    activePipelines.delete(projectId);
+    clearInterval(keepalive);
+    const current = activePipelines.get(projectId);
+    if (current?.connId === connId) {
+      activePipelines.delete(projectId);
+    }
     close();
   });
 

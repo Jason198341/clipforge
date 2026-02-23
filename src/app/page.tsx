@@ -17,7 +17,10 @@ export default function Home() {
   }, [loadFromStorage]);
 
   const hasStarted = steps.some(s => s.status !== 'pending');
-  const isDone = steps.every(s => s.status === 'done' || s.status === 'skipped');
+  const allStepsDone = steps.every(s => s.status === 'done' || s.status === 'skipped');
+  // Fallback: if render step hit 100% but 'done' SSE was missed, treat as complete
+  const renderStep = steps.find(s => s.id === 'render');
+  const isDone = allStepsDone || (!isRunning && hasStarted && renderStep?.progress === 100);
 
   function handleSubmit(url: string) {
     const project = createProject(url);

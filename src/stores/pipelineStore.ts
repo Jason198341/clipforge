@@ -102,8 +102,19 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
     };
 
     es.onerror = () => {
-      // SSE auto-reconnects, but if pipeline is done, close
-      if (!get().isRunning) es.close();
+      const { isRunning: running, steps: currentSteps } = get();
+      // If all steps are done or render hit 100%, mark as complete
+      const renderStep = currentSteps.find(s => s.id === 'render');
+      const allDone = currentSteps.every(s => s.status === 'done' || s.status === 'skipped');
+      if (!running || allDone || renderStep?.progress === 100) {
+        if (renderStep?.progress === 100 && renderStep.status !== 'done') {
+          const updated = currentSteps.map(s =>
+            s.id === 'render' ? { ...s, status: 'done' as const } : s
+          );
+          set({ steps: updated, isRunning: false, currentStep: null });
+        }
+        es.close();
+      }
     };
 
     set({ eventSource: es });

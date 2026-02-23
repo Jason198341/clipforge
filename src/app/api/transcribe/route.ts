@@ -23,10 +23,12 @@ export async function POST(req: NextRequest) {
       await extractAudio(paths.source, paths.audio);
     }
 
-    // Step 2: Transcribe
+    // Step 2: Transcribe (no progress callback in standalone API)
     const transcription = await transcribe(paths.audio, paths.root, {
       model: model || 'base',
       language: language || 'auto',
+    }, (pct, msg) => {
+      console.log(`[transcribe] ${pct}% - ${msg}`);
     });
 
     // Save transcript

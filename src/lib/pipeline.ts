@@ -49,12 +49,21 @@ export async function runPipeline(
   // === Step 3: Transcribe ===
   onProgress({ type: 'progress', stepId: 'transcribe', progress: 0, message: 'Transcribing with Whisper...' });
 
-  const transcription = await transcribe(paths.audio, paths.root, {
-    model: 'base',
-    language: 'auto',
-  });
+  let transcription;
+  if (fileReady(paths.transcript)) {
+    // Reuse existing transcript
+    transcription = JSON.parse(readFileSync(paths.transcript, 'utf-8'));
+    onProgress({ type: 'progress', stepId: 'transcribe', progress: 100, message: 'Using cached transcript' });
+  } else {
+    transcription = await transcribe(paths.audio, paths.root, {
+      model: 'base',
+      language: 'auto',
+    }, (pct, msg) => {
+      onProgress({ type: 'progress', stepId: 'transcribe', progress: pct, message: msg });
+    });
 
-  writeFileSync(paths.transcript, JSON.stringify(transcription, null, 2));
+    writeFileSync(paths.transcript, JSON.stringify(transcription, null, 2));
+  }
   onProgress({
     type: 'step-complete',
     stepId: 'transcribe',
