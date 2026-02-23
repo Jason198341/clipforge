@@ -25,8 +25,10 @@ export function getProjectPaths(projectId: string) {
   const root = getProjectDir(projectId);
   const clipsDir = path.join(root, 'clips');
   const renderedDir = path.join(root, 'rendered');
+  const storyDir = path.join(root, 'story');
   mkdirSync(clipsDir, { recursive: true });
   mkdirSync(renderedDir, { recursive: true });
+  mkdirSync(storyDir, { recursive: true });
 
   return {
     root,
@@ -38,6 +40,7 @@ export function getProjectPaths(projectId: string) {
     analysis: path.join(root, 'analysis.json'),
     clipsDir,
     renderedDir,
+    storyDir,
   };
 }
 

@@ -26,6 +26,7 @@ export const PIPELINE_STEPS = [
   { id: 'analyze', name: 'AI Analysis' },
   { id: 'extract-clips', name: 'Extract Clips' },
   { id: 'render', name: 'Render Shorts' },
+  { id: 'story-compose', name: 'Story Compose' },
 ] as const;
 
 export type PipelineStepId = (typeof PIPELINE_STEPS)[number]['id'];

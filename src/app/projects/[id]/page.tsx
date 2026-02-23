@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import ClipGallery from '@/components/clip-gallery';
 import ProcessingStatus from '@/components/processing-status';
@@ -15,25 +15,46 @@ export default function ProjectPage() {
   const [clips, setClips] = useState<Clip[]>([]);
   const [metadata, setMetadata] = useState<VideoMetadata | null>(null);
   const [loading, setLoading] = useState(true);
+  const [storyMode, setStoryMode] = useState(true);
+  const [composingAll, setComposingAll] = useState(false);
 
   // Load clips from filesystem API
-  useEffect(() => {
-    async function loadClips() {
-      try {
-        const res = await fetch(`/api/clips?projectId=${projectId}`);
-        if (res.ok) {
-          const data = await res.json();
-          setClips(data.clips || []);
-          setMetadata(data.metadata || null);
-        }
-      } catch { /* ignore */ }
-      setLoading(false);
-    }
-    loadClips();
+  const loadClips = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/clips?projectId=${projectId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setClips(data.clips || []);
+        setMetadata(data.metadata || null);
+      }
+    } catch { /* ignore */ }
+    setLoading(false);
   }, [projectId]);
+
+  useEffect(() => { loadClips(); }, [loadClips]);
 
   function handleSelectClip(clip: Clip) {
     router.push(`/projects/${projectId}/editor?clipId=${clip.id}`);
+  }
+
+  async function handleComposeStory(clip: Clip) {
+    await fetch('/api/story', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, clipId: clip.id }),
+    });
+    loadClips(); // Refresh to show updated status
+  }
+
+  async function handleComposeAll() {
+    setComposingAll(true);
+    await fetch('/api/story', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId }),
+    });
+    setComposingAll(false);
+    loadClips();
   }
 
   if (loading) {
@@ -44,6 +65,11 @@ export default function ProjectPage() {
       </div>
     );
   }
+
+  const hasStoryMeta = clips.some(c => c.storyMeta);
+  const hasRendered = clips.some(c => c.status === 'rendered' || c.status === 'story-composed');
+  const allStoried = clips.every(c => c.storyPath || !c.storyMeta);
+  const pendingStoryCount = clips.filter(c => c.storyMeta && !c.storyPath && c.renderedPath).length;
 
   return (
     <div>
@@ -61,12 +87,62 @@ export default function ProjectPage() {
         )}
       </div>
 
+      {/* Story Mode toggle bar */}
+      {hasStoryMeta && (
+        <div className="flex items-center justify-between mb-4 p-3 bg-surface border border-border rounded-lg">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setStoryMode(!storyMode)}
+              className={`relative w-10 h-5 rounded-full transition-colors ${
+                storyMode ? 'bg-amber-500' : 'bg-surface-hover'
+              }`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${
+                storyMode ? 'translate-x-5' : ''
+              }`} />
+            </button>
+            <span className="text-sm font-medium">
+              Story Mode
+              <span className="text-text-muted ml-2 font-normal">
+                3-Act storytelling DNA
+              </span>
+            </span>
+          </div>
+
+          {storyMode && pendingStoryCount > 0 && hasRendered && (
+            <button
+              onClick={handleComposeAll}
+              disabled={composingAll}
+              className="px-4 py-1.5 bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+            >
+              {composingAll ? (
+                <span className="flex items-center gap-2">
+                  <span className="animate-spin w-3 h-3 border border-amber-400 border-t-transparent rounded-full" />
+                  Composing...
+                </span>
+              ) : (
+                `Compose All (${pendingStoryCount})`
+              )}
+            </button>
+          )}
+
+          {allStoried && hasStoryMeta && (
+            <span className="text-xs text-amber-400">All stories composed</span>
+          )}
+        </div>
+      )}
+
       {/* Processing status if running */}
       {isRunning && <ProcessingStatus />}
 
       {/* Clip gallery */}
       {clips.length > 0 ? (
-        <ClipGallery clips={clips} onSelectClip={handleSelectClip} />
+        <ClipGallery
+          clips={clips}
+          storyMode={storyMode}
+          onSelectClip={handleSelectClip}
+          onComposeStory={handleComposeStory}
+        />
       ) : (
         !isRunning && (
           <div className="text-center py-16">
@@ -79,7 +155,7 @@ export default function ProjectPage() {
       )}
 
       {/* Render all button */}
-      {clips.length > 0 && clips.some(c => c.status !== 'rendered') && (
+      {clips.length > 0 && clips.some(c => c.status !== 'rendered' && c.status !== 'story-composed') && (
         <div className="mt-6 text-center">
           <button
             onClick={async () => {

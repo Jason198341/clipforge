@@ -5,6 +5,7 @@ import { detectSilence } from './silence-detect';
 import { analyzeHighlights } from './ai-analyze';
 import { extractAllClips } from './clip-extractor';
 import { renderAllClips } from './template-renderer';
+import { composeAllStories } from './story-composer';
 import { getProjectPaths, fileReady } from './paths';
 import { writeFileSync, readFileSync } from 'fs';
 import type { SSEMessage } from '@/types/pipeline';
@@ -131,4 +132,28 @@ export async function runPipeline(
     stepId: 'render',
     message: `Rendered ${rendered.length} clips`,
   });
+
+  // === Step 8: Story Compose ===
+  const hasStoryMeta = rendered.some(c => c.storyMeta);
+  if (hasStoryMeta) {
+    onProgress({ type: 'progress', stepId: 'story-compose', progress: 0, message: 'Composing stories...' });
+
+    const storied = await composeAllStories(projectId, rendered, (current, total, title) => {
+      const pct = Math.round((current / total) * 100);
+      onProgress({ type: 'progress', stepId: 'story-compose', progress: pct, message: `Story: ${title} (${current}/${total})` });
+    });
+
+    writeFileSync(paths.analysis, JSON.stringify(storied, null, 2));
+    onProgress({
+      type: 'step-complete',
+      stepId: 'story-compose',
+      message: `Composed ${storied.filter(c => c.storyPath).length} story clips`,
+    });
+  } else {
+    onProgress({
+      type: 'step-complete',
+      stepId: 'story-compose',
+      message: 'Skipped — no story metadata',
+    });
+  }
 }

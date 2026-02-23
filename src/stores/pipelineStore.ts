@@ -104,12 +104,14 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
     es.onerror = () => {
       const { isRunning: running, steps: currentSteps } = get();
       // If all steps are done or render hit 100%, mark as complete
+      const storyStep = currentSteps.find(s => s.id === 'story-compose');
       const renderStep = currentSteps.find(s => s.id === 'render');
+      const lastStep = storyStep || renderStep;
       const allDone = currentSteps.every(s => s.status === 'done' || s.status === 'skipped');
-      if (!running || allDone || renderStep?.progress === 100) {
-        if (renderStep?.progress === 100 && renderStep.status !== 'done') {
+      if (!running || allDone || lastStep?.progress === 100) {
+        if (lastStep?.progress === 100 && lastStep.status !== 'done') {
           const updated = currentSteps.map(s =>
-            s.id === 'render' ? { ...s, status: 'done' as const } : s
+            s.id === lastStep.id ? { ...s, status: 'done' as const } : s
           );
           set({ steps: updated, isRunning: false, currentStep: null });
         }
@@ -150,6 +152,7 @@ export function stepToStatus(stepId: string | null): PipelineStatus {
     analyze: 'analyzing',
     'extract-clips': 'extracting-clips',
     render: 'rendering',
+    'story-compose': 'story-composing',
   };
   return stepId ? (map[stepId] || 'idle') : 'idle';
 }
