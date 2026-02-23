@@ -1,9 +1,11 @@
 import path from 'path';
 import { writeFileSync, existsSync, unlinkSync, mkdirSync } from 'fs';
 import { runFfmpeg, runFfmpegWithProgress, getDuration } from './ffmpeg';
-import { generateHook } from './hooking-tts';
 import { getProjectPaths, ffmpegPath, ffmpegFilterPath, getFontsDir } from './paths';
 import type { Clip, StoryMeta } from '@/types/project';
+
+/** Qwen3 TTS server endpoint (local) */
+const QWEN_TTS_URL = 'http://localhost:8000/tts';
 
 /** Duration targets for each Act */
 const ACT1_TARGET_SEC = 4;  // Title card + hook TTS
@@ -14,7 +16,7 @@ const BGM_VOLUME = 0.08;
 
 /** Font for drawtext */
 const TITLE_FONT = 'Pretendard-Bold';
-const SUBTITLE_FONT = 'Pretendard-Medium';
+const SUBTITLE_FONT = 'NotoSansKR-Bold';
 
 type ProgressFn = (pct: number, msg: string) => void;
 
@@ -49,35 +51,54 @@ export async function composeStory(
   const prefix = path.join(storyDir, clip.id);
   const outputPath = `${prefix}_story.mp4`;
 
-  onProgress?.(5, 'Generating TTS narration...');
+  onProgress?.(5, 'Generating TTS narration (Qwen3)...');
 
-  // --- TTS: combine hook + context into one call to save quota ---
-  const combinedText = `${storyMeta.hook}\n\n...\n\n${storyMeta.context}`;
+  // --- TTS via Qwen3 local server: combine hook + context into one call ---
+  const combinedText = `${storyMeta.hook}. ... ${storyMeta.context}`;
   const ttsWavPath = `${prefix}_tts_combined.wav`;
-  await generateHook(combinedText, ttsWavPath);
+  let ttsAvailable = false;
 
-  const ttsDuration = await getDuration(ttsWavPath);
-
-  // Split TTS: hook ≈ first 40%, context ≈ remaining 60%
-  const hookDuration = Math.min(ACT1_TARGET_SEC, ttsDuration * 0.4);
-  const contextStart = hookDuration;
-  const contextDuration = ttsDuration - contextStart;
+  try {
+    await generateTtsQwen(combinedText, ttsWavPath);
+    ttsAvailable = true;
+  } catch (err) {
+    console.warn(`[story-composer] TTS failed, using silent fallback: ${err instanceof Error ? err.message : err}`);
+  }
 
   const hookWav = `${prefix}_hook.wav`;
   const contextWav = `${prefix}_context.wav`;
+  let hookDuration: number;
+  let contextDuration: number;
 
-  await Promise.all([
-    runFfmpeg([
-      '-y', '-i', ttsWavPath,
-      '-t', hookDuration.toFixed(2),
-      '-c', 'copy', hookWav,
-    ]),
-    runFfmpeg([
-      '-y', '-i', ttsWavPath,
-      '-ss', contextStart.toFixed(2),
-      '-c', 'copy', contextWav,
-    ]),
-  ]);
+  if (ttsAvailable) {
+    const ttsDuration = await getDuration(ttsWavPath);
+    // Split TTS: hook ≈ first 40%, context ≈ remaining 60%
+    hookDuration = Math.min(ACT1_TARGET_SEC, ttsDuration * 0.4);
+    const contextStart = hookDuration;
+    contextDuration = ttsDuration - contextStart;
+
+    await Promise.all([
+      runFfmpeg([
+        '-y', '-i', ttsWavPath,
+        '-t', hookDuration.toFixed(2),
+        '-c', 'copy', hookWav,
+      ]),
+      runFfmpeg([
+        '-y', '-i', ttsWavPath,
+        '-ss', contextStart.toFixed(2),
+        '-c', 'copy', contextWav,
+      ]),
+    ]);
+  } else {
+    // Generate silent WAV files as fallback
+    hookDuration = ACT1_TARGET_SEC;
+    contextDuration = ACT2_TARGET_SEC;
+
+    await Promise.all([
+      runFfmpeg(['-y', '-f', 'lavfi', '-i', `anullsrc=r=44100:cl=mono`, '-t', hookDuration.toFixed(2), hookWav]),
+      runFfmpeg(['-y', '-f', 'lavfi', '-i', `anullsrc=r=44100:cl=mono`, '-t', contextDuration.toFixed(2), contextWav]),
+    ]);
+  }
 
   onProgress?.(20, 'Building Act 1 (Title Card)...');
 
@@ -90,14 +111,14 @@ export async function composeStory(
 
   // === ACT 2: Buildup ===
   const act2Path = `${prefix}_act2.mp4`;
-  const act2Duration = Math.max(ACT2_TARGET_SEC, contextDuration + 0.5);
+  const act2Duration = Math.min(8, Math.max(ACT2_TARGET_SEC, contextDuration + 0.5));
   await buildAct2(act2Path, act2Duration, contextWav, renderedPath, storyMeta, clip);
 
   onProgress?.(70, 'Building Act 3 (Payoff)...');
 
-  // === ACT 3: Payoff (rendered clip with volume fade-in) ===
+  // === ACT 3: Payoff (extract from source + render as 9:16) ===
   const act3Path = `${prefix}_act3.mp4`;
-  await buildAct3(act3Path, renderedPath);
+  await buildAct3(act3Path, paths.source, clip);
 
   onProgress?.(85, 'Concatenating 3 Acts...');
 
@@ -114,7 +135,8 @@ export async function composeStory(
     '-f', 'concat',
     '-safe', '0',
     '-i', concatListPath,
-    '-c', 'copy',
+    '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
+    '-c:a', 'aac', '-b:a', '192k',
     '-movflags', '+faststart',
     outputPath,
   ]);
@@ -168,7 +190,7 @@ async function buildAct1(
     `[bg2]drawtext=fontfile='${fontsDir}/${TITLE_FONT}.otf':text='${titleText}':fontcolor=white:fontsize=52:x=(w-text_w)/2:y=(h/3)-text_h:enable='between(t,0.3,${duration})'[bg3]`,
 
     // Hook text (smaller, centered below title)
-    `[bg3]drawtext=fontfile='${fontsDir}/${SUBTITLE_FONT}.otf':text='${hookText}':fontcolor=0xcccccc:fontsize=32:x=(w-text_w)/2:y=(h/3)+40:enable='between(t,0.5,${duration})'[vout]`,
+    `[bg3]drawtext=fontfile='${fontsDir}/${SUBTITLE_FONT}.ttf':text='${hookText}':fontcolor=0xcccccc:fontsize=32:x=(w-text_w)/2:y=(h/3)+40:enable='between(t,0.5,${duration})'[vout]`,
 
     // Audio: TTS hook + ambient BGM (sine tone + noise)
     `anoisesrc=d=${duration}:c=pink:r=44100:a=0.003[noise]`,
@@ -203,49 +225,52 @@ async function buildAct1(
 }
 
 /**
- * Act 2 — Buildup: First seconds of rendered clip slowed down + context TTS + volume ramp
+ * Act 2 — Buildup: Dark background + context TTS + shareHook subtitle + rising BGM
+ * Uses color source (no video decode) for maximum reliability.
  */
 async function buildAct2(
   outputPath: string,
   duration: number,
   contextWavPath: string,
-  renderedPath: string,
+  _renderedPath: string,
   story: StoryMeta,
-  clip: Clip,
+  _clip: Clip,
 ): Promise<void> {
   const w = 1080;
   const h = 1920;
   const fontsDir = ffmpegFilterPath(getFontsDir());
 
   const shareText = escapeDrawtext(story.shareHook);
+  const contextText = escapeDrawtext(story.context.slice(0, 60) + '...');
+  const tintColor = arcToColor(story.emotionalArc);
 
-  // Use first few seconds of rendered clip, slowed to 0.5x for buildup effect
   const filter = [
-    // Video: take first portion of rendered clip, slow to 0.5x
-    `[0:v]trim=start=0:end=${(duration / 2).toFixed(2)},setpts=2*PTS,scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}[slow]`,
+    // Dark background — slightly lighter than Act 1 to show progression
+    `color=c=0x0f1525:s=${w}x${h}:d=${duration}:r=30[bg]`,
 
-    // Darken the slowed video for text readability
-    `[slow]colorbalance=bs=-0.2:bm=-0.1,eq=brightness=-0.15:contrast=1.1[dark]`,
+    // Colored accent bar (thicker, pulsing feel via fade)
+    `color=c=${tintColor}:s=${w}x6:d=${duration}:r=30[line]`,
+    `[bg][line]overlay=0:h/2-3[bg2]`,
 
-    // shareHook subtitle at bottom
-    `[dark]drawtext=fontfile='${fontsDir}/${SUBTITLE_FONT}.otf':text='${shareText}':fontcolor=white:fontsize=36:x=(w-text_w)/2:y=h-200:enable='between(t,0.5,${duration})':borderw=2:bordercolor=black@0.5[vout]`,
+    // Context preview text (upper area, smaller)
+    `[bg2]drawtext=fontfile='${fontsDir}/${SUBTITLE_FONT}.ttf':text='${contextText}':fontcolor=0x888888:fontsize=28:x=(w-text_w)/2:y=h/3:enable='between(t,0.3,${duration})'[bg3]`,
 
-    // Audio from rendered clip: start at 10% volume, ramp to 70%
-    `[0:a]atrim=start=0:end=${(duration / 2).toFixed(2)},asetpts=PTS-STARTPTS,atempo=0.5,volume=0.1,afade=t=in:st=0:d=${duration.toFixed(2)}:start_volume=0.1:curve=log[clipaudio]`,
+    // shareHook subtitle (bottom, prominent)
+    `[bg3]drawtext=fontfile='${fontsDir}/${SUBTITLE_FONT}.ttf':text='${shareText}':fontcolor=white:fontsize=42:x=(w-text_w)/2:y=h*2/3:enable='between(t,0.8,${duration})':borderw=2:bordercolor=black@0.5[vout]`,
 
-    // Context TTS
+    // Context TTS narration
     `[1:a]aresample=44100,volume=0.9[tts]`,
 
-    // BGM ambient
-    `anoisesrc=d=${duration}:c=pink:r=44100:a=0.002[noise]`,
-    `sine=f=150:d=${duration}:r=44100,volume=0.05[drone]`,
+    // BGM ambient — slightly more intense than Act 1
+    `anoisesrc=d=${duration}:c=pink:r=44100:a=0.004[noise]`,
+    `sine=f=180:d=${duration}:r=44100,volume=0.06[drone]`,
     `[noise][drone]amix=inputs=2:duration=first[bgm]`,
 
-    // Mix all audio: TTS + clip audio (quiet) + BGM
-    `[tts][clipaudio][bgm]amix=inputs=3:duration=longest:weights=1 0.5 0.2[mixed]`,
+    // Mix TTS + BGM
+    `[tts][bgm]amix=inputs=2:duration=longest:weights=1 0.3[mixed]`,
 
-    // Volume ramp: overall volume rises through Act 2
-    `[mixed]volume='0.3+0.7*t/${duration.toFixed(2)}':eval=frame[aout]`,
+    // Volume ramp: rises through Act 2
+    `[mixed]volume='0.4+0.6*t/${duration.toFixed(2)}':eval=frame[aout]`,
   ].join(';\n');
 
   const filterPath = outputPath.replace('.mp4', '_filter.txt');
@@ -253,7 +278,7 @@ async function buildAct2(
 
   await runFfmpeg([
     '-y',
-    '-i', renderedPath,
+    '-f', 'lavfi', '-i', `color=c=0x0f1525:s=${w}x${h}:d=${duration}:r=30`,
     '-i', contextWavPath,
     '-filter_complex_script', filterPath,
     '-map', '[vout]',
@@ -268,18 +293,27 @@ async function buildAct2(
 }
 
 /**
- * Act 3 — Payoff: Full rendered clip with brief volume fade-in
+ * Act 3 — Payoff: Extract clip range from source, render as 9:16, brief volume fade-in
+ * Uses source video directly to avoid corrupt rendered clip NAL issues.
  */
 async function buildAct3(
   outputPath: string,
-  renderedPath: string,
+  sourcePath: string,
+  clip: Clip,
 ): Promise<void> {
-  // Short audio fade-in from 0.7 → 1.0 over 0.5s, then full volume
+  const w = 1080;
+  const h = 1920;
+  const duration = clip.endSec - clip.startSec;
+
+  // Extract from source, scale to 9:16 with blur background, add volume ramp
   await runFfmpeg([
     '-y',
-    '-i', renderedPath,
-    '-af', 'afade=t=in:st=0:d=0.5:start_volume=0.7',
-    '-c:v', 'copy',
+    '-ss', clip.startSec.toString(),
+    '-i', sourcePath,
+    '-t', duration.toString(),
+    '-vf', `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}`,
+    '-af', "volume='min(1.0, 0.7+0.6*t)':eval=frame",
+    '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
     '-c:a', 'aac', '-b:a', '192k',
     outputPath,
   ]);
@@ -307,6 +341,25 @@ export async function composeAllStories(
   // Return all clips (story-composed ones + unchanged ones)
   const storyIds = new Set(results.map(r => r.id));
   return clips.map(c => storyIds.has(c.id) ? results.find(r => r.id === c.id)! : c);
+}
+
+/**
+ * Generate TTS audio via local Qwen3 TTS server.
+ * POST http://localhost:8000/tts → WAV binary response.
+ */
+async function generateTtsQwen(text: string, outputPath: string): Promise<void> {
+  const res = await fetch(QWEN_TTS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, language: 'Korean' }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Qwen TTS error: ${res.status} ${await res.text()}`);
+  }
+
+  const arrayBuf = await res.arrayBuffer();
+  writeFileSync(outputPath, Buffer.from(arrayBuf));
 }
 
 /** Escape text for ffmpeg drawtext filter */
