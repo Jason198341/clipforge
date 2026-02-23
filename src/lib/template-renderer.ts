@@ -75,26 +75,25 @@ function buildFilterComplex(template: Template, assPath: string, clip: Clip): st
   const { layout, overlay } = template;
   const { width, height } = layout;
   const filters: string[] = [];
-  const escapedAssPath = ffmpegFilterPath(assPath);
-  const fontsDir = ffmpegFilterPath(getFontsDir());
+  // For ASS filter: use single quotes around path to handle Windows colons
+  const escapedAssPath = ffmpegFilterPath(assPath).replace(/'/g, "'\\''");
+  const fontsDir = ffmpegFilterPath(getFontsDir()).replace(/'/g, "'\\''");
 
   // Input: [0:v] and [0:a]
   let videoLabel = '0:v';
   let audioLabel = '0:a';
 
   if (layout.background === 'blur') {
-    // Blur-fill layout:
-    // 1. Scale + crop source to fill 9:16 as blurred background
-    // 2. Scale source to fit center area
-    // 3. Overlay centered video on blurred bg
+    // Blur-fill layout: need to split input since we reference it twice
+    filters.push(`[${videoLabel}]split=2[bg_in][fg_in]`);
 
     // Background: scale to fill + blur
-    filters.push(`[${videoLabel}]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=${layout.blurRadius || 40}:${Math.floor((layout.blurRadius || 40) / 2)}[bg]`);
+    filters.push(`[bg_in]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=${layout.blurRadius || 40}:${Math.floor((layout.blurRadius || 40) / 2)}[bg]`);
 
     // Foreground: scale to fit within video area
     const videoH = Math.round(height * layout.videoScale);
     const videoW = width;
-    filters.push(`[${videoLabel}]scale=${videoW}:${videoH}:force_original_aspect_ratio=decrease,pad=${videoW}:${videoH}:(ow-iw)/2:(oh-ih)/2:color=black@0[fg]`);
+    filters.push(`[fg_in]scale=${videoW}:${videoH}:force_original_aspect_ratio=decrease,pad=${videoW}:${videoH}:(ow-iw)/2:(oh-ih)/2:color=black@0[fg]`);
 
     // Overlay centered
     const yOffset = Math.round((height - videoH) / 2);
@@ -138,8 +137,8 @@ function buildFilterComplex(template: Template, assPath: string, clip: Clip): st
     videoLabel = 'bordered';
   }
 
-  // Apply ASS subtitles
-  filters.push(`[${videoLabel}]ass=${escapedAssPath}:fontsdir=${fontsDir}[vout]`);
+  // Apply ASS subtitles (use ' for paths with Windows drive colons)
+  filters.push(`[${videoLabel}]ass='${escapedAssPath}':fontsdir='${fontsDir}'[vout]`);
 
   // Audio passthrough
   filters.push(`[${audioLabel}]acopy[aout]`);

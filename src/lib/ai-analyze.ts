@@ -27,9 +27,9 @@ export async function analyzeHighlights(
   const apiKey = process.env.FIREWORKS_API_KEY;
   if (!apiKey) throw new Error('FIREWORKS_API_KEY not set');
 
-  // Build condensed transcript with timestamps
+  // Build condensed transcript with SECONDS timestamps (not M:SS to avoid AI confusion)
   const transcriptText = transcription.segments
-    .map(s => `[${formatTime(s.start)}-${formatTime(s.end)}] ${s.text}`)
+    .map(s => `[${s.start.toFixed(1)}s-${s.end.toFixed(1)}s] ${s.text}`)
     .join('\n');
 
   const systemPrompt = `You are a viral content analyst. Analyze the transcript of a YouTube video and identify 3-8 segments that would make compelling short-form clips (30-90 seconds each).
@@ -42,11 +42,12 @@ For each clip, evaluate:
 
 Rate each clip 1-10 for viral potential.
 
-IMPORTANT:
-- Clips should be 30-90 seconds (min 20s, max 120s)
+CRITICAL RULES:
+- Timestamps are in SECONDS (e.g., 42.0 means 42 seconds, NOT 0 minutes 42 seconds)
+- start_sec and end_sec must be pure seconds (numbers like 42.0, 125.5, etc.)
+- Each clip should be 30-90 seconds long (min 20s, max 120s)
 - Avoid overlapping segments
 - Prefer segments with clear beginning and end points
-- Include a mix of high-score and moderate-score clips
 
 Respond ONLY with valid JSON:
 {
@@ -54,8 +55,8 @@ Respond ONLY with valid JSON:
     {
       "title": "short catchy title",
       "description": "1-sentence description of what happens",
-      "start_sec": 123.4,
-      "end_sec": 178.9,
+      "start_sec": 42.0,
+      "end_sec": 102.5,
       "viral_score": 8,
       "reason": "why this segment is compelling",
       "tags": ["tag1", "tag2"]
@@ -63,7 +64,7 @@ Respond ONLY with valid JSON:
   ]
 }`;
 
-  const userPrompt = `Video: "${videoTitle}" (${formatTime(videoDuration)})
+  const userPrompt = `Video: "${videoTitle}" (${videoDuration} seconds total)
 
 Transcript:
 ${transcriptText}`;
