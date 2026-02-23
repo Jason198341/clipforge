@@ -14,8 +14,9 @@ export async function POST(req: NextRequest) {
 
     const paths = getProjectPaths(projectId);
 
-    // Try hooked version first, then rendered, then raw
+    // Try story version first, then hooked, rendered, raw
     const candidates = [
+      path.join(paths.storyDir, `${clipId}_story.mp4`),
       path.join(paths.renderedDir, `${clipId}_hooked.mp4`),
       path.join(paths.renderedDir, `${clipId}_rendered.mp4`),
       path.join(paths.clipsDir, `${clipId}.mp4`),
