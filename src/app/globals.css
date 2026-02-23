@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0c0f1a;
+  --surface: #141929;
+  --surface-hover: #1c2240;
+  --border: #2a3154;
+  --text: #e8eaf0;
+  --text-muted: #8b92a8;
+  --primary: #06b6d4;
+  --primary-hover: #22d3ee;
+  --primary-dim: rgba(6, 182, 212, 0.15);
+  --accent: #f59e0b;
+  --accent-dim: rgba(245, 158, 11, 0.15);
+  --danger: #ef4444;
+  --success: #22c55e;
+}
+
+@theme {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-dim: var(--primary-dim);
+  --color-accent: var(--accent);
+  --color-accent-dim: var(--accent-dim);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* SSE progress bar animation */
+@keyframes progress-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+.animate-progress-pulse { animation: progress-pulse 1.5s ease-in-out infinite; }
