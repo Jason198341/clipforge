@@ -135,6 +135,7 @@ export async function composeStory(
     '-f', 'concat',
     '-safe', '0',
     '-i', concatListPath,
+    '-r', '30',
     '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
     '-c:a', 'aac', '-b:a', '192k',
     '-movflags', '+faststart',
@@ -305,7 +306,7 @@ async function buildAct3(
   const h = 1920;
   const duration = clip.endSec - clip.startSec;
 
-  // Extract from source, scale to 9:16 with blur background, add volume ramp
+  // Extract from source, scale to 9:16, force 30fps to match Acts 1/2
   await runFfmpeg([
     '-y',
     '-ss', clip.startSec.toString(),
@@ -313,6 +314,7 @@ async function buildAct3(
     '-t', duration.toString(),
     '-vf', `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}`,
     '-af', "volume='min(1.0, 0.7+0.6*t)':eval=frame",
+    '-r', '30',
     '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
     '-c:a', 'aac', '-b:a', '192k',
     outputPath,
